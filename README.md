@@ -12,11 +12,15 @@ A dashboard for the construction business accounts. It reads the master Excel fi
 - Office and personal spending
 - Entries that still need fixing in Excel (missing date, site, category or account)
 
-## Your figures stay private
+## Data on this site
 
-This page contains no business figures. When you click **Open Excel file**, the file is read
-inside your own browser and is never uploaded anywhere. The page remembers the last file
-on that device only, and **Remove from this device** clears it.
+`data.json` holds the current figures exported from the master Excel file, and the dashboard
+opens with them. **This repository and website are public**, so anyone with the link can see
+these figures.
+
+To refresh the site, export the latest Excel into `data.json` and push it. For a one-off look at
+newer entries, tap **Open Excel file** on the page: that file is read only on your device and is
+never uploaded.
 
 ## Publishing on GitHub Pages
 

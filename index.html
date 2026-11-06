@@ -165,6 +165,7 @@ footer{color:var(--muted);font-size:12px;padding-bottom:24px}
     <b>Example data.</b>
     <span>These figures are invented. Open your <span class="num">Construction_Accounts_Site_Costing.xlsx</span> to see your own. The file is read only on this device and is never uploaded.</span>
   </div>
+  <div class="banner" id="pubBanner" hidden><span id="pubText"></span></div>
   <div class="banner" id="loadedBanner" hidden>
     <span id="loadedText"></span>
     <button class="btn" id="forget" type="button">Remove from this device</button>
@@ -323,8 +324,10 @@ function render(){
   const asOf=to||lastDate();
   $("#asOf").textContent=D.sample?"Example data":(D.tx.length+" entries · last entry "+fmtD(lastDate()));
   $("#sampleBanner").hidden=!D.sample;
-  $("#loadedBanner").hidden=D.sample;
-  if(!D.sample)$("#loadedText").innerHTML="Showing <b>"+esc(D.file)+"</b>, opened "+new Date(D.loadedAt).toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"})+". Kept only in this browser.";
+  $("#pubBanner").hidden=!D.published;
+  $("#loadedBanner").hidden=D.sample||D.published;
+  if(D.published)$("#pubText").innerHTML="Figures updated <b>"+fmtD(D.updated)+"</b> from the master Excel file. To see newer entries straight away, tap <b>Open Excel file</b>.";
+  else if(!D.sample)$("#loadedText").innerHTML="Showing <b>"+esc(D.file)+"</b>, opened "+new Date(D.loadedAt).toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"})+". Kept only in this browser.";
 
   /* balances as of 'to' */
   const bal={};D.accounts.forEach(a=>bal[a.name]=a.opening);
@@ -432,16 +435,24 @@ document.querySelectorAll(".chip").forEach(c=>c.addEventListener("click",()=>set
 document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{tab=b.dataset.tab;save();render()}));
 ["fSite","fAcc","fType"].forEach(id=>$("#"+id).addEventListener("change",renderEntries));
 $("#fText").addEventListener("input",renderEntries);
-$("#forget").addEventListener("click",()=>{try{localStorage.removeItem(KEY)}catch(e){}D=sample();selSite="";setPeriod("all")});
+$("#forget").addEventListener("click",()=>{try{localStorage.removeItem(KEY)}catch(e){}D=PUB||sample();selSite="";setPeriod("all")});
 let dc=0;const drop=$("#drop");
 addEventListener("dragenter",e=>{if([...(e.dataTransfer?.types||[])].includes("Files")){dc++;drop.hidden=false}});
 addEventListener("dragleave",()=>{if(--dc<=0){dc=0;drop.hidden=true}});
 addEventListener("dragover",e=>e.preventDefault());
 addEventListener("drop",e=>{e.preventDefault();dc=0;drop.hidden=true;openFile(e.dataTransfer.files[0])});
 
-if(!restore())D=sample();
-if(typeof XLSX==="undefined"){$("#errText").textContent=" The Excel reader didn't load. Check the internet connection and reload.";$("#errBanner").hidden=false}
+let PUB=null;
+const lastOf=x=>(x&&x.tx||[]).reduce((a,t)=>t.d&&t.d>a?t.d:a,"");
+const local=restore()?D:null;
+D=local||sample();
 setPeriod("all");
+fetch("data.json",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{
+  if(!j||!Array.isArray(j.tx))return;
+  PUB={...j,sample:false,published:true};
+  if(!local||lastOf(PUB)>=lastOf(local)){D=PUB;selSite="";setPeriod("all")}
+}).catch(()=>{});
+if(typeof XLSX==="undefined"){$("#errText").textContent=" The Excel reader didn't load, so Open Excel file won't work until the page is reloaded with internet.";$("#errBanner").hidden=false}
 })();
 </script>
 </body>
