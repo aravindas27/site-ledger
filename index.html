@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Construction Site Ledger</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* Layout: a site-office ledger board — sticky control bar, money-on-hand strip, then tabbed working views (sites, entries, months). */
+:root{
+  --bg:#EEF1F4; --surface:#FFFFFF; --sunk:#E3E8EE; --line:#CDD5DE;
+  --fg:#16202B; --muted:#5A6878; --accent:#1D4E89; --accent-ink:#FFFFFF;
+  --good:#1E7F4E; --bad:#B42318; --warn:#9A6200; --warn-bg:#FFF3D6;
+  --g-material:#4F86C6; --g-labour:#D98A2B; --g-sub:#4E9A68; --g-mach:#9466BE; --g-other:#8E99A6;
+  --f-display:"Archivo","Arial Narrow",Arial,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#10161D; --surface:#18212B; --sunk:#202B37; --line:#2E3B4A;
+  --fg:#E6ECF2; --muted:#93A1B1; --accent:#7FB0EE; --accent-ink:#0D1B2C;
+  --good:#5CC48D; --bad:#F2877C; --warn:#F0C060; --warn-bg:#3A2E12;
+  --g-material:#6FA2E0; --g-labour:#EBA24E; --g-sub:#6DBB87; --g-mach:#B48CDB; --g-other:#9AA6B4;
+  color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#10161D; --surface:#18212B; --sunk:#202B37; --line:#2E3B4A;
+  --fg:#E6ECF2; --muted:#93A1B1; --accent:#7FB0EE; --accent-ink:#0D1B2C;
+  --good:#5CC48D; --bad:#F2877C; --warn:#F0C060; --warn-bg:#3A2E12;
+  --g-material:#6FA2E0; --g-labour:#EBA24E; --g-sub:#6DBB87; --g-mach:#B48CDB; --g-other:#9AA6B4;
+  color-scheme:dark;}
+*{box-sizing:border-box}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--f-body)}
+[hidden]{display:none!important}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+h1,h2,h3{font-family:var(--f-display);font-stretch:85%;margin:0;text-wrap:balance;letter-spacing:.005em}
+.label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* top bar */
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--line)}
+.bar .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding-block:12px}
+.brand{display:flex;flex-direction:column;min-width:0;margin-right:auto}
+.brand h1{font-size:22px;font-weight:800;line-height:1.1}
+.brand small{color:var(--muted);font-size:12px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 12px;cursor:pointer;font-weight:500;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.period{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.chip{border:1px solid var(--line);background:transparent;border-radius:999px;padding:4px 11px;cursor:pointer;font-size:13px}
+.chip[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.period input[type=date]{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 6px;font-size:13px}
+
+.banner{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;background:var(--warn-bg);color:var(--fg);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:6px;padding:10px 14px;margin-top:16px}
+.banner b{color:var(--warn)}
+main{display:flex;flex-direction:column;gap:22px;padding-block:18px 48px}
+
+/* money strip */
+.money{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.acct{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.acct .v{font-family:var(--f-display);font-stretch:80%;font-weight:700;font-size:26px;font-variant-numeric:tabular-nums;line-height:1.15}
+.acct .s{font-size:12px;color:var(--muted)}
+.acct.total{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.acct.total .label,.acct.total .s{color:inherit;opacity:.75}
+.neg{color:var(--bad)}
+
+.sumrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
+.sumrow > div{padding:10px 14px;border-right:1px solid var(--line);min-width:0}
+.sumrow > div:last-child{border-right:0}
+.sumrow .v{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:18px;font-weight:500}
+
+/* tabs */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{background:none;border:0;border-bottom:3px solid transparent;padding:8px 14px;cursor:pointer;font-family:var(--f-display);font-stretch:85%;font-weight:700;font-size:16px;color:var(--muted);white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
+.panel{display:flex;flex-direction:column;gap:16px;min-width:0}
+.sec-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 12px}
+.sec-head h2{font-size:20px;font-weight:750}
+.sec-head p{margin:0;color:var(--muted);font-size:13px}
+
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;background:var(--sunk);white-space:nowrap}
+td.r,th.r{text-align:right}
+td.num{white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+tfoot td{font-weight:600;background:var(--sunk);border-top:1px solid var(--line);border-bottom:0}
+tr.click{cursor:pointer}
+tr.click:hover td{background:var(--sunk)}
+tr.sel td{background:color-mix(in srgb,var(--accent) 10%,var(--surface))}
+
+.stack{display:flex;height:10px;border-radius:3px;overflow:hidden;background:var(--sunk);min-width:120px}
+.stack span{display:block;height:100%}
+.pill{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.st-Ongoing{color:var(--accent)} .st-Upcoming{color:var(--g-mach)} .st-Pending{color:var(--warn)} .st-Completed{color:var(--good)} .st-OnHold{color:var(--muted)}
+.t-in{color:var(--good);font-weight:600} .t-out{color:var(--bad);font-weight:600} .t-tr{color:var(--muted);font-weight:600}
+
+/* site detail */
+.detail{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:18px}
+.detail h3{font-size:19px;font-weight:750}
+.kv{display:grid;grid-template-columns:auto auto;gap:4px 16px;justify-content:start;margin-top:10px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;text-align:right}
+.bars{display:flex;flex-direction:column;gap:7px;margin-top:12px}
+.brow{display:grid;grid-template-columns:minmax(0,9em) minmax(0,1fr) auto;gap:8px;align-items:center;font-size:13px}
+.brow .track{height:9px;background:var(--sunk);border-radius:3px;overflow:hidden}
+.brow .track span{display:block;height:100%}
+.brow .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.detail .tbl-wrap{max-height:480px;overflow:auto}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.filters select,.filters input[type=search]{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 8px;font-size:13px;min-width:0;max-width:100%}
+.filters input[type=search]{flex:1 1 180px}
+.muted{color:var(--muted)}
+.issues{background:var(--warn-bg);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:6px;padding:10px 14px;font-size:13px}
+.issues ul{margin:6px 0 0;padding-left:18px}
+
+.drop{position:fixed;inset:0;background:color-mix(in srgb,var(--accent) 18%,transparent);border:3px dashed var(--accent);display:grid;place-items:center;z-index:20;font-family:var(--f-display);font-size:28px;font-weight:800;color:var(--fg)}
+footer{color:var(--muted);font-size:12px;padding-bottom:24px}
+
+@media (max-width:760px){
+  .detail{grid-template-columns:minmax(0,1fr)}
+  .acct .v{font-size:22px}
+  .sumrow > div{border-right:0;border-bottom:1px solid var(--line)}
+}
+@media (prefers-reduced-motion:no-preference){.tab,.btn,.chip{transition:color .15s,background .15s,border-color .15s}}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <div class="brand">
+      <h1>Construction Site Ledger</h1>
+      <small id="asOf">Example data</small>
+    </div>
+    <div class="period" role="group" aria-label="Period">
+      <button class="chip" data-p="all" aria-pressed="true">All</button>
+      <button class="chip" data-p="month">This month</button>
+      <button class="chip" data-p="last">Last month</button>
+      <button class="chip" data-p="7">Last 7 days</button>
+      <input type="date" id="from" aria-label="From date">
+      <span class="muted">to</span>
+      <input type="date" id="to" aria-label="To date">
+    </div>
+    <label class="btn primary" for="file">Open Excel file</label>
+    <input type="file" id="file" accept=".xlsx,.xlsm,.xls" hidden>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="banner" id="sampleBanner">
+    <b>Example data.</b>
+    <span>These figures are invented. Open your <span class="num">Construction_Accounts_Site_Costing.xlsx</span> to see your own. The file is read only on this device and is never uploaded.</span>
+  </div>
+  <div class="banner" id="loadedBanner" hidden>
+    <span id="loadedText"></span>
+    <button class="btn" id="forget" type="button">Remove from this device</button>
+  </div>
+  <div class="banner" id="errBanner" hidden><b>Couldn't read that file.</b><span id="errText"></span></div>
+</div>
+
+<main class="wrap">
+  <section aria-labelledby="h-money" class="panel">
+    <div class="sec-head"><h2 id="h-money">Money on hand</h2><p id="moneyNote"></p></div>
+    <div class="money" id="money"></div>
+  </section>
+
+  <section aria-labelledby="h-period" class="panel">
+    <div class="sec-head"><h2 id="h-period">In this period</h2><p id="periodNote"></p></div>
+    <div class="sumrow" id="sumrow"></div>
+    <div class="issues" id="issues" hidden></div>
+  </section>
+
+  <div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-tab="sites">Sites</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="entries">Entries</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="months">Months</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="heads">Office &amp; personal</button>
+    </div>
+  </div>
+
+  <section class="panel" data-panel="sites">
+    <div class="sec-head"><h2>Project costing by site</h2><p>Tap a site to see where its money went.</p></div>
+    <div class="legend" id="legend"></div>
+    <div class="tbl-wrap"><table id="siteTbl"></table></div>
+    <div class="detail" id="detail" hidden></div>
+  </section>
+
+  <section class="panel" data-panel="entries" hidden>
+    <div class="sec-head"><h2>All entries</h2><p id="entryCount"></p></div>
+    <div class="filters">
+      <select id="fSite" aria-label="Site or head"></select>
+      <select id="fAcc" aria-label="Account"></select>
+      <select id="fType" aria-label="Type">
+        <option value="">All types</option><option>Money In</option><option>Money Out</option><option>Transfer</option>
+      </select>
+      <input type="search" id="fText" placeholder="Search description, category, remarks" aria-label="Search">
+    </div>
+    <div class="tbl-wrap"><table id="entryTbl"></table></div>
+  </section>
+
+  <section class="panel" data-panel="months" hidden>
+    <div class="sec-head"><h2>Month by month</h2><p>All entries, regardless of the period chosen above.</p></div>
+    <div class="tbl-wrap"><table id="monthTbl"></table></div>
+  </section>
+
+  <section class="panel" data-panel="heads" hidden>
+    <div class="sec-head"><h2>Office and personal spending</h2><p>Spending not charged to any site, in the chosen period.</p></div>
+    <div class="tbl-wrap"><table id="headTbl"></table></div>
+  </section>
+
+  <footer>Reads the Transactions and Masters sheets of the master Excel file. Enter entries in Excel as usual, then open the saved file here again to refresh.</footer>
+</main>
+<div class="drop" id="drop" hidden>Drop the Excel file to open it</div>
+
+<script>
+(function(){
+"use strict";
+const GROUPS=[["Material","--g-material"],["Labour","--g-labour"],["Subcontract","--g-sub"],["Machinery & Transport","--g-mach"],["Other Site Cost","--g-other"]];
+const OFFICE="Office / General", PERSONAL="Personal / Home";
+const KEY="siteLedger.v1";
+const $=s=>document.querySelector(s);
+const inr=n=>(n<0?"−":"")+"₹"+Math.abs(Math.round(n)).toLocaleString("en-IN");
+const inrp=n=>(n<0?"−":"")+"₹"+Math.abs(n).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtD=iso=>{if(!iso)return"";const[y,m,d]=iso.split("-");return d+" "+["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+m-1]+" "+y};
+const fmtM=ym=>{const[y,m]=ym.split("-");return["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+m-1]+" "+y};
+const isoUTC=dt=>dt.toISOString().slice(0,10);
+const todayISO=()=>{const t=new Date();return new Date(t.getTime()-t.getTimezoneOffset()*6e4).toISOString().slice(0,10)};
+
+/* ---------- example data (invented) ---------- */
+function sample(){
+  const S=["Example Villa – Kovalam","Example Shop – Pattom","Example House – Kowdiar"];
+  const t=(d,type,site,cat,desc,acc,amt,to)=>({d,type,site,cat,desc,acc,to:to||"",amt,ref:"",rem:""});
+  return {sample:true,file:"",accounts:[{name:"SBI",opening:40000},{name:"HDFC",opening:150000},{name:"Cash",opening:60000}],
+   sites:[{name:S[0],contract:2500000,status:"Ongoing"},{name:S[1],contract:900000,status:"Ongoing"},{name:S[2],contract:0,status:"Upcoming"}],
+   catGroup:{"Client Receipt / Advance":"Income","Cement":"Material","Steel / Rods":"Material","Bricks / Blocks":"Material","Sand / M-Sand":"Material","Mason / Skilled Labour":"Labour","Labour Wages":"Labour","Subcontractor Payment":"Subcontract","JCB / Machinery Hire":"Machinery & Transport","Fuel":"Machinery & Transport","Site Misc Expenses":"Other Site Cost","Household Expenses":"Personal","Office Expenses":"Office","Bank ↔ Cash Transfer":"Transfer","Other Income":"Income"},
+   tx:[t("2026-10-02","Money In",S[0],"Client Receipt / Advance","Stage 2 payment","HDFC",300000),
+       t("2026-10-03","Money Out",S[0],"Cement","120 bags","HDFC",48000),
+       t("2026-10-04","Money Out",S[0],"Mason / Skilled Labour","Mason – weekly","Cash",14000),
+       t("2026-10-06","Transfer","","Bank ↔ Cash Transfer","Cash withdrawal","HDFC",30000,"Cash"),
+       t("2026-10-08","Money Out",S[1],"Steel / Rods","TMT bars","HDFC",62000),
+       t("2026-10-09","Money Out",S[1],"Subcontractor Payment","Shuttering crew","Cash",9000),
+       t("2026-10-12","Money Out",S[0],"JCB / Machinery Hire","JCB – 4 hrs","HDFC",6400),
+       t("2026-10-15","Money In",S[1],"Client Receipt / Advance","Advance","SBI",150000),
+       t("2026-10-18","Money Out",S[1],"Bricks / Blocks","Hollow blocks","HDFC",38000),
+       t("2026-10-21","Money Out",PERSONAL,"Household Expenses","Groceries","Cash",3200),
+       t("2026-10-24","Money Out",S[0],"Sand / M-Sand","M-sand 2 loads","HDFC",27000),
+       t("2026-10-27","Money Out",S[0],"Site Misc Expenses","Food & tea","Cash",850),
+       t("2026-10-30","Money Out",S[1],"Labour Wages","Helpers","Cash",6000),
+       t("2026-11-02","Money Out",S[0],"Fuel","Diesel","HDFC",1650),
+       t("2026-11-03","Money Out",OFFICE,"Office Expenses","Stationery","Cash",420),
+       t("2026-11-04","Money Out",S[2],"Site Misc Expenses","Site cleaning","Cash",1200)]};
+}
+
+/* ---------- reading the master Excel ---------- */
+function cellDate(v){
+  if(v==null||v==="")return null;
+  if(typeof v==="number")return isoUTC(new Date(Math.round((v-25569)*864e5)));
+  if(v instanceof Date)return isoUTC(v);
+  const m=String(v).trim().match(/^(\d{1,2})[-\/. ](\d{1,2}|[A-Za-z]{3})[-\/. ](\d{2,4})$/);
+  if(m){const mo=isNaN(m[2])?["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].indexOf(m[2].toLowerCase())+1:+m[2];
+    const y=m[3].length===2?2000+ +m[3]:+m[3];return y+"-"+String(mo).padStart(2,"0")+"-"+String(+m[1]).padStart(2,"0")}
+  return null;
+}
+const str=v=>v==null?"":String(v).trim();
+const numv=v=>{const n=typeof v==="number"?v:parseFloat(String(v??"").replace(/[,₹\s]/g,""));return isFinite(n)?n:0};
+function parse(buf,name){
+  const wb=XLSX.read(buf,{type:"array"});
+  const T=wb.Sheets["Transactions"], M=wb.Sheets["Masters"];
+  if(!T||!M)throw new Error("This file has no Transactions or Masters sheet. Open the master accounts workbook.");
+  const m=XLSX.utils.sheet_to_json(M,{header:1,raw:true,defval:null});
+  const g=(r,c)=>(m[r]||[])[c];
+  const accounts=[];for(let r=5;r<=8;r++){const n=str(g(r,0));if(n)accounts.push({name:n,opening:numv(g(r,1))})}
+  const sites=[];for(let r=13;r<=32;r++){const n=str(g(r,0));if(n)sites.push({name:n,contract:numv(g(r,1)),status:str(g(r,2))})}
+  const catGroup={};for(let r=5;r<=59;r++){const c=str(g(r,9));if(c)catGroup[c]=str(g(r,10))}
+  const rows=XLSX.utils.sheet_to_json(T,{header:1,raw:true,defval:null});
+  const tx=[];
+  for(let r=4;r<rows.length;r++){const x=rows[r]||[];const amt=numv(x[8]);if(!amt)continue;
+    tx.push({d:cellDate(x[1]),type:str(x[2]),site:str(x[3]),cat:str(x[4]),desc:str(x[5]),acc:str(x[6]),to:str(x[7]),amt,ref:str(x[9]),rem:str(x[10])})}
+  if(!tx.length&&!accounts.length)throw new Error("No entries found in the Transactions sheet.");
+  return {sample:false,file:name,loadedAt:new Date().toISOString(),accounts,sites,catGroup,tx};
+}
+
+/* ---------- state ---------- */
+let D=null, from="", to="", period="all", tab="sites", selSite="";
+function save(){try{localStorage.setItem(KEY,JSON.stringify({D,tab}))}catch(e){}}
+function restore(){try{const s=JSON.parse(localStorage.getItem(KEY)||"null");if(s&&s.D&&!s.D.sample){D=s.D;tab=s.tab||tab;return true}}catch(e){}return false}
+
+const groupOf=t=>D.catGroup[t.cat]||(t.type==="Money Out"?"Other Site Cost":"");
+const lastDate=()=>D.tx.reduce((a,t)=>t.d&&t.d>a?t.d:a,"");
+const inPeriod=t=>t.d&&(!from||t.d>=from)&&(!to||t.d<=to);
+const siteNames=()=>D.sites.map(s=>s.name);
+
+function setPeriod(p){
+  period=p;const ref=lastDate()||todayISO();const[y,mo]=ref.split("-").map(Number);
+  if(p==="all"){from="";to=""}
+  else if(p==="month"){from=`${y}-${String(mo).padStart(2,"0")}-01`;to=""}
+  else if(p==="last"){const d=new Date(Date.UTC(y,mo-2,1));from=isoUTC(d);to=isoUTC(new Date(Date.UTC(y,mo-1,0)))}
+  else if(p==="7"){const d=new Date(ref+"T00:00:00Z");d.setUTCDate(d.getUTCDate()-6);from=isoUTC(d);to=""}
+  $("#from").value=from;$("#to").value=to;
+  document.querySelectorAll(".chip").forEach(c=>c.setAttribute("aria-pressed",String(c.dataset.p===p)));
+  render();
+}
+
+/* ---------- rendering ---------- */
+function render(){
+  if(!D)return;
+  const asOf=to||lastDate();
+  $("#asOf").textContent=D.sample?"Example data":(D.tx.length+" entries · last entry "+fmtD(lastDate()));
+  $("#sampleBanner").hidden=!D.sample;
+  $("#loadedBanner").hidden=D.sample;
+  if(!D.sample)$("#loadedText").innerHTML="Showing <b>"+esc(D.file)+"</b>, opened "+new Date(D.loadedAt).toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"})+". Kept only in this browser.";
+
+  /* balances as of 'to' */
+  const bal={};D.accounts.forEach(a=>bal[a.name]=a.opening);
+  D.tx.forEach(t=>{if(!t.d||(to&&t.d>to))return;
+    if(t.type==="Money In"&&t.acc in bal)bal[t.acc]+=t.amt;
+    else if(t.type==="Money Out"&&t.acc in bal)bal[t.acc]-=t.amt;
+    else if(t.type==="Transfer"){if(t.acc in bal)bal[t.acc]-=t.amt;if(t.to in bal)bal[t.to]+=t.amt}});
+  let tot=0;const cards=D.accounts.map(a=>{tot+=bal[a.name];const v=bal[a.name];
+    return `<div class="acct"><span class="label">${esc(a.name)}</span><span class="v ${v<0?"neg":""}">${inrp(v)}</span><span class="s">opening ${inr(a.opening)}</span></div>`});
+  $("#money").innerHTML=`<div class="acct total"><span class="label">Total funds</span><span class="v">${inrp(tot)}</span><span class="s">as on ${fmtD(asOf)||"—"}</span></div>`+cards.join("");
+  $("#moneyNote").textContent="Balances at the end of "+(fmtD(asOf)||"the last entry");
+
+  /* period summary */
+  const P=D.tx.filter(inPeriod);const sites=new Set(siteNames());
+  let rin=0,site=0,off=0,per=0;
+  P.forEach(t=>{if(t.type==="Money In")rin+=t.amt;else if(t.type==="Money Out"){if(t.site===OFFICE)off+=t.amt;else if(t.site===PERSONAL)per+=t.amt;else site+=t.amt}});
+  const net=rin-site-off-per;
+  const cell=(l,v,cls="")=>`<div><div class="label">${l}</div><div class="v ${cls}">${inr(v)}</div></div>`;
+  $("#sumrow").innerHTML=cell("Received",rin)+cell("Spent on sites",site)+cell("Office",off)+cell("Personal",per)+cell("Net",net,net<0?"neg":"");
+  $("#periodNote").textContent=(from||to)?(fmtD(from)||"Start")+" to "+(fmtD(to)||"latest")+" · "+P.length+" entries":"All entries · "+P.length;
+
+  /* data issues */
+  const iss=[];
+  D.tx.forEach((t,i)=>{const p=[];if(!t.d)p.push("no date");if(!t.type)p.push("no type");if(!t.acc)p.push("no account");
+    if(t.type==="Transfer"&&!t.to)p.push("no To account");if(t.type!=="Transfer"&&!t.site)p.push("no site/head");if(!t.cat)p.push("no category");
+    if(p.length)iss.push(`${esc(t.desc||"(no description)")} ${inr(t.amt)} – ${p.join(", ")}`)});
+  $("#issues").hidden=!iss.length;
+  if(iss.length)$("#issues").innerHTML=`<b>${iss.length} ${iss.length===1?"entry needs":"entries need"} fixing in Excel</b><ul>${iss.slice(0,6).map(s=>"<li>"+s+"</li>").join("")}</ul>`;
+
+  renderSites(P);renderEntries();renderMonths();renderHeads(P);
+  document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.tab===tab)));
+  document.querySelectorAll("[data-panel]").forEach(p=>p.hidden=p.dataset.panel!==tab);
+}
+
+function renderSites(P){
+  $("#legend").innerHTML=GROUPS.map(([g,v])=>`<span><i style="background:var(${v})"></i>${g}</span>`).join("");
+  const rows=D.sites.map(s=>{const r={...s,rec:0,cost:0,g:{}};GROUPS.forEach(([g])=>r.g[g]=0);
+    P.forEach(t=>{if(t.site!==s.name)return;if(t.type==="Money In")r.rec+=t.amt;else if(t.type==="Money Out"){r.cost+=t.amt;const g=groupOf(t);r.g[g in r.g?g:"Other Site Cost"]+=t.amt}});return r});
+  const max=Math.max(1,...rows.map(r=>r.cost));
+  let T={rec:0,cost:0};
+  const body=rows.map(r=>{T.rec+=r.rec;T.cost+=r.cost;const pl=r.rec-r.cost;
+    const bar=`<div class="stack" style="width:${Math.max(4,r.cost/max*100)}%">${GROUPS.map(([g,v])=>r.g[g]?`<span title="${g}: ${inr(r.g[g])}" style="width:${r.g[g]/r.cost*100}%;background:var(${v})"></span>`:"").join("")}</div>`;
+    const st=r.status?`<span class="pill st-${esc(r.status.replace(/\s/g,""))}">${esc(r.status)}</span>`:"";
+    const pct=r.contract?`${Math.round(r.cost/r.contract*100)}%`:"—";
+    return `<tr class="click ${selSite===r.name?"sel":""}" data-site="${esc(r.name)}" tabindex="0"><td><b>${esc(r.name)}</b></td><td>${st}</td>
+      <td class="r num">${r.rec?inr(r.rec):"—"}</td><td class="r num">${r.cost?inr(r.cost):"—"}</td>
+      <td class="r num ${pl<0?"neg":""}">${r.rec||r.cost?inr(pl):"—"}</td><td style="min-width:160px">${r.cost?bar:'<span class="muted">No spending</span>'}</td>
+      <td class="r num">${r.contract?inr(r.contract):"—"}</td><td class="r num">${pct}</td></tr>`}).join("");
+  $("#siteTbl").innerHTML=`<thead><tr><th>Site</th><th>Status</th><th class="r">Received</th><th class="r">Cost</th><th class="r">Profit / (loss)</th><th>Cost split</th><th class="r">Contract</th><th class="r">Cost % of contract</th></tr></thead>
+    <tbody>${body}</tbody><tfoot><tr><td>All sites</td><td></td><td class="r num">${inr(T.rec)}</td><td class="r num">${inr(T.cost)}</td><td class="r num ${T.rec-T.cost<0?"neg":""}">${inr(T.rec-T.cost)}</td><td></td><td></td><td></td></tr></tfoot>`;
+  document.querySelectorAll("#siteTbl tr.click").forEach(tr=>{const go=()=>{selSite=selSite===tr.dataset.site?"":tr.dataset.site;render();if(selSite)$("#detail").scrollIntoView({block:"nearest"})};
+    tr.addEventListener("click",go);tr.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();go()}})});
+  const det=$("#detail");
+  if(!selSite||!sites().has(selSite)){det.hidden=true;return}
+  const r=rows.find(x=>x.name===selSite);const list=P.filter(t=>t.site===selSite).sort((a,b)=>(b.d||"").localeCompare(a.d||""));
+  const byCat={};list.forEach(t=>{if(t.type==="Money Out")byCat[t.cat||"(no category)"]=(byCat[t.cat||"(no category)"]||0)+t.amt});
+  const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);const cmax=Math.max(1,...cats.map(c=>c[1]));
+  const colorOf=c=>{const g=D.catGroup[c]||"Other Site Cost";const f=GROUPS.find(x=>x[0]===g);return f?f[1]:"--g-other"};
+  det.hidden=false;
+  det.innerHTML=`<div><span class="label">Site detail</span><h3>${esc(r.name)}</h3>
+    <dl class="kv num"><dt>Received</dt><dd>${inr(r.rec)}</dd><dt>Cost</dt><dd>${inr(r.cost)}</dd><dt>Profit / (loss)</dt><dd class="${r.rec-r.cost<0?"neg":""}">${inr(r.rec-r.cost)}</dd>
+    ${r.contract?`<dt>Contract</dt><dd>${inr(r.contract)}</dd><dt>Still to collect</dt><dd>${inr(r.contract-r.rec)}</dd>`:""}</dl>
+    <div class="bars">${cats.map(([c,v])=>`<div class="brow"><span class="name" title="${esc(c)}">${esc(c)}</span><span class="track"><span style="width:${v/cmax*100}%;background:var(${colorOf(c)})"></span></span><span class="num">${inr(v)}</span></div>`).join("")||'<span class="muted">No spending in this period.</span>'}</div></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid from</th><th class="r">Amount</th></tr></thead><tbody>
+    ${list.map(t=>`<tr><td class="num">${fmtD(t.d)}</td><td>${esc(t.desc)}</td><td class="muted">${esc(t.cat)}</td><td>${esc(t.acc)}</td><td class="r num ${t.type==="Money In"?"t-in":""}">${t.type==="Money In"?"+":""}${inrp(t.amt)}</td></tr>`).join("")||'<tr><td colspan="5" class="muted">No entries in this period.</td></tr>'}</tbody></table></div>`;
+}
+const sites=()=>new Set(siteNames());
+
+function fillSelect(sel,label,opts){const cur=sel.value;sel.innerHTML=`<option value="">${label}</option>`+opts.map(o=>`<option>${esc(o)}</option>`).join("");if(opts.includes(cur))sel.value=cur}
+function renderEntries(){
+  const heads=[...siteNames(),OFFICE,PERSONAL];
+  fillSelect($("#fSite"),"All sites & heads",heads);fillSelect($("#fAcc"),"All accounts",D.accounts.map(a=>a.name));
+  const fs=$("#fSite").value,fa=$("#fAcc").value,ft=$("#fType").value,q=$("#fText").value.trim().toLowerCase();
+  const L=D.tx.filter(t=>inPeriod(t)||(!t.d&&!from&&!to)).filter(t=>(!fs||t.site===fs)&&(!fa||t.acc===fa||t.to===fa)&&(!ft||t.type===ft)&&(!q||[t.desc,t.cat,t.rem,t.ref,t.site].join(" ").toLowerCase().includes(q)))
+    .sort((a,b)=>(b.d||"").localeCompare(a.d||""));
+  let i=0,o=0;L.forEach(t=>{if(t.type==="Money In")i+=t.amt;else if(t.type==="Money Out")o+=t.amt});
+  $("#entryCount").textContent=`${L.length} entries · in ${inr(i)} · out ${inr(o)}`;
+  const cls={"Money In":"t-in","Money Out":"t-out","Transfer":"t-tr"};
+  $("#entryTbl").innerHTML=`<thead><tr><th>Date</th><th>Type</th><th>Site / head</th><th>Category</th><th>Description</th><th>Account</th><th class="r">Amount</th><th>Remarks</th></tr></thead><tbody>
+   ${L.slice(0,500).map(t=>`<tr><td class="num">${fmtD(t.d)||'<span class="neg">no date</span>'}</td><td class="${cls[t.type]||""}">${esc(t.type)}</td><td>${esc(t.site)||'<span class="muted">—</span>'}</td><td class="muted">${esc(t.cat)}</td><td>${esc(t.desc)}</td><td>${esc(t.acc)}${t.to?" → "+esc(t.to):""}</td><td class="r num">${inrp(t.amt)}</td><td class="muted">${esc(t.rem)}</td></tr>`).join("")||'<tr><td colspan="8" class="muted">No entries match.</td></tr>'}</tbody>`;
+}
+function renderMonths(){
+  const M={};D.tx.forEach(t=>{if(!t.d)return;const k=t.d.slice(0,7);const m=M[k]||(M[k]={i:0,s:0,o:0,p:0});
+    if(t.type==="Money In")m.i+=t.amt;else if(t.type==="Money Out"){if(t.site===OFFICE)m.o+=t.amt;else if(t.site===PERSONAL)m.p+=t.amt;else m.s+=t.amt}});
+  const ks=Object.keys(M).sort().reverse();
+  $("#monthTbl").innerHTML=`<thead><tr><th>Month</th><th class="r">Received</th><th class="r">Site costs</th><th class="r">Office</th><th class="r">Personal</th><th class="r">Net</th></tr></thead><tbody>
+   ${ks.map(k=>{const m=M[k],n=m.i-m.s-m.o-m.p;return `<tr><td><b>${fmtM(k)}</b></td><td class="r num">${inr(m.i)}</td><td class="r num">${inr(m.s)}</td><td class="r num">${inr(m.o)}</td><td class="r num">${inr(m.p)}</td><td class="r num ${n<0?"neg":""}">${inr(n)}</td></tr>`}).join("")||'<tr><td colspan="6" class="muted">No dated entries.</td></tr>'}</tbody>`;
+}
+function renderHeads(P){
+  const rows={};P.forEach(t=>{if(t.type!=="Money Out"||(t.site!==OFFICE&&t.site!==PERSONAL))return;const k=t.site+"|"+(t.cat||"(no category)");rows[k]=(rows[k]||0)+t.amt});
+  const L=Object.entries(rows).sort((a,b)=>a[0].localeCompare(b[0])||b[1]-a[1]);let s=0;
+  $("#headTbl").innerHTML=`<thead><tr><th>Head</th><th>Category</th><th class="r">Spent</th></tr></thead><tbody>
+   ${L.map(([k,v])=>{s+=v;const[h,c]=k.split("|");return `<tr><td>${esc(h)}</td><td>${esc(c)}</td><td class="r num">${inr(v)}</td></tr>`}).join("")||'<tr><td colspan="3" class="muted">Nothing in this period.</td></tr>'}</tbody>
+   <tfoot><tr><td>Total</td><td></td><td class="r num">${inr(s)}</td></tr></tfoot>`;
+}
+
+/* ---------- events ---------- */
+function openFile(f){if(!f)return;const r=new FileReader();
+  r.onload=e=>{try{D=parse(new Uint8Array(e.target.result),f.name);$("#errBanner").hidden=true;selSite="";save();setPeriod(period)}
+    catch(err){$("#errText").textContent=" "+err.message;$("#errBanner").hidden=false}};
+  r.readAsArrayBuffer(f)}
+$("#file").addEventListener("change",e=>{openFile(e.target.files[0]);e.target.value=""});
+document.querySelectorAll(".chip").forEach(c=>c.addEventListener("click",()=>setPeriod(c.dataset.p)));
+["from","to"].forEach(id=>$("#"+id).addEventListener("change",()=>{from=$("#from").value;to=$("#to").value;period="custom";document.querySelectorAll(".chip").forEach(c=>c.setAttribute("aria-pressed","false"));render()}));
+document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{tab=b.dataset.tab;save();render()}));
+["fSite","fAcc","fType"].forEach(id=>$("#"+id).addEventListener("change",renderEntries));
+$("#fText").addEventListener("input",renderEntries);
+$("#forget").addEventListener("click",()=>{try{localStorage.removeItem(KEY)}catch(e){}D=sample();selSite="";setPeriod("all")});
+let dc=0;const drop=$("#drop");
+addEventListener("dragenter",e=>{if([...(e.dataTransfer?.types||[])].includes("Files")){dc++;drop.hidden=false}});
+addEventListener("dragleave",()=>{if(--dc<=0){dc=0;drop.hidden=true}});
+addEventListener("dragover",e=>e.preventDefault());
+addEventListener("drop",e=>{e.preventDefault();dc=0;drop.hidden=true;openFile(e.dataTransfer.files[0])});
+
+if(!restore())D=sample();
+if(typeof XLSX==="undefined"){$("#errText").textContent=" The Excel reader didn't load. Check the internet connection and reload.";$("#errBanner").hidden=false}
+setPeriod("all");
+})();
+</script>
+</body>
+</html>
